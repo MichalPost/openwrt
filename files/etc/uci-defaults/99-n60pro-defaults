@@ -1,0 +1,22 @@
+#!/bin/sh
+
+set -eu
+
+# Run once on first boot. If user keeps config across upgrades,
+# existing settings should not be force-overwritten.
+
+LAN_IP="192.168.6.1"
+TZ="CST-8"
+ZONENAME="Asia/Shanghai"
+
+uci -q batch <<EOF
+set network.lan.ipaddr='${LAN_IP}'
+set system.@system[0].timezone='${TZ}'
+set system.@system[0].zonename='${ZONENAME}'
+EOF
+
+uci -q commit network || true
+uci -q commit system || true
+
+exit 0
+

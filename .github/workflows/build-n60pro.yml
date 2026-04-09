@@ -1,0 +1,313 @@
+name: Build N60PRO firmware
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "Build profile (config in configs/)"
+        required: true
+        default: "nx60pro-heavy"
+        type: choice
+        options:
+          - nx60pro-basic
+          - nx60pro-heavy
+          - nx60pro-high-power.base
+      feeds_lock:
+        description: "Optional feeds lock, e.g. istore=<sha>,nas=<sha>,nas_luci=<sha>"
+        required: false
+        default: ""
+        type: string
+      flash_layout:
+        description: "Flash layout (for custom device variants)"
+        required: true
+        default: "stock-128m"
+        type: choice
+        options:
+          - stock-128m
+          - mod-512m
+      source_flavor:
+        description: "Source flavor"
+        required: true
+        default: "padavanonly-immortalwrt-mt798x-6.6"
+        type: choice
+        options:
+          - padavanonly-immortalwrt-mt798x-6.6
+      upload_release:
+        description: "Publish to GitHub Release"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+concurrency:
+  group: n60pro-${{ github.workflow }}-${{ github.ref }}-${{ inputs.profile }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    env:
+      WORKDIR: workdir
+
+    steps:
+      - name: Checkout build repo
+        uses: actions/checkout@v4
+
+      - name: Show selected inputs
+        run: |
+          echo "profile=${{ inputs.profile }}"
+          echo "source_flavor=${{ inputs.source_flavor }}"
+          echo "upload_release=${{ inputs.upload_release }}"
+          echo "flash_layout=${{ inputs.flash_layout }}"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+            bzip2 ccache cmake cpio curl device-tree-compiler ecj fastjar flex gawk gettext \
+            gcc-multilib g++-multilib git gnutls-dev gperf haveged help2man intltool \
+            lib32gcc-s1 libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
+            libmpc-dev libmpfr-dev libncurses-dev libpython3-dev libreadline-dev libssl-dev \
+            libtool libyaml-dev libz-dev lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full \
+            patch pkgconf python3 python3-pip python3-ply python3-docutils python3-pyelftools \
+            qemu-utils re2c rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl \
+            unzip vim wget xmlto xxd zlib1g-dev zstd \
+            shellcheck shfmt
+
+      - name: Shell script format/lint
+        run: |
+          set -eux
+          shfmt -d scripts/*.sh
+          shellcheck scripts/*.sh
+
+      - name: Create workdir
+        run: |
+          mkdir -p "${WORKDIR}"
+
+      - name: Clone source (padavanonly/immortalwrt-mt798x-6.6)
+        working-directory: ${{ env.WORKDIR }}
+        run: |
+          set -eux
+          # Keep this aligned with upstream docs:
+          # https://github.com/padavanonly/immortalwrt-mt798x-6.6
+          git clone -b openwrt-24.10-6.6 --single-branch --filter=blob:none \
+            https://github.com/padavanonly/immortalwrt-mt798x-6.6 openwrt
+
+      - name: Apply common customization (diy-part1)
+        working-directory: ${{ env.WORKDIR }}/openwrt
+        run: |
+          chmod +x "${GITHUB_WORKSPACE}/scripts/diy-part1.sh"
+          "${GITHUB_WORKSPACE}/scripts/diy-part1.sh"
+
+      - name: Update feeds
+        working-directory: ${{ env.WORKDIR }}/openwrt
+        run: |
+          set -eux
+          ./scripts/feeds update -a
+
+      - name: Lock feeds (optional)
+        if: ${{ inputs.feeds_lock != '' }}
+        working-directory: ${{ env.WORKDIR }}/openwrt
+        run: |
+          set -eux
+          LOCKS="${{ inputs.feeds_lock }}"
+          IFS=',' read -r -a pairs <<< "${LOCKS}"
+          for kv in "${pairs[@]}"; do
+            [ -n "${kv}" ] || continue
+            name="${kv%%=*}"
+            ref="${kv#*=}"
+            if [ -z "${name}" ] || [ -z "${ref}" ] || [ "${name}" = "${ref}" ]; then
+              echo "Invalid feeds_lock entry: ${kv}"
+              exit 1
+            fi
+            if [ ! -d "feeds/${name}" ]; then
+              echo "Feed not found: feeds/${name}"
+              exit 1
+            fi
+            if [ ! -d "feeds/${name}/.git" ]; then
+              echo "Feed is not a git repo: feeds/${name}"
+              exit 1
+            fi
+            echo "Locking feed ${name} to ${ref}"
+            git -C "feeds/${name}" fetch --all --tags --prune
+            git -C "feeds/${name}" checkout --force "${ref}"
+          done
+
+      - name: Install feeds
+        working-directory: ${{ env.WORKDIR }}/openwrt
+        run: |
+          set -eux
+          ./scripts/feeds install -a
+
+      - name: Apply N60PRO customization (diy-part-n60pro)
+        working-directory: ${{ env.WORKDIR }}/openwrt
+        run: |
+          chmod +x "${GITHUB_WORKSPACE}/scripts/diy-part-n60pro.sh"
+          "${GITHUB_WORKSPACE}/scripts/diy-part-n60pro.sh"
+
+      - name: Seed config (defconfig high-power as base)
+        working-directory: ${{ env.WORKDIR }}/openwrt
+        run: |
+          set -eux
+          cp -f defconfig/nx60pro-ipailna-high-power.config .config
+
+      - name: Overlay profile config (configs/<profile>.config)
+        working-directory: ${{ env.WORKDIR }}/openwrt
+        run: |
+          set -eux
+          PROFILE="${{ inputs.profile }}"
+          FRAG_DIR="${GITHUB_WORKSPACE}/configs/fragments"
+
+          add_frag() {
+            local f="$1"
+            local path="${FRAG_DIR}/${f}"
+            if [ ! -f "${path}" ] || [ ! -s "${path}" ]; then
+              echo "Missing fragment: ${path}"
+              exit 1
+            fi
+            echo "" >> .config
+            echo "# --- BEGIN fragment: ${f} ---" >> .config
+            cat "${path}" >> .config
+            echo "" >> .config
+            echo "# --- END fragment: ${f} ---" >> .config
+          }
+
+          case "${PROFILE}" in
+            nx60pro-basic)
+              add_frag "base-luci-zh.config"
+              add_frag "tools-core.config"
+              ;;
+            nx60pro-heavy)
+              add_frag "base-luci-zh.config"
+              add_frag "tools-core.config"
+              add_frag "multiwan.config"
+              add_frag "vpn-zerotier.config"
+              add_frag "adguard.config"
+              add_frag "storage-usb.config"
+              add_frag "qol-and-services.config"
+              ;;
+            nx60pro-high-power.base)
+              # Keep this aligned with your baseline high-power profile intentions.
+              add_frag "base-luci-zh.config"
+              add_frag "tools-core.config"
+              ;;
+            *)
+              echo "Unknown profile: ${PROFILE}"
+              exit 1
+              ;;
+          esac
+
+      - name: Apply flash layout overrides (optional)
+        working-directory: ${{ env.WORKDIR }}/openwrt
+        run: |
+          set -eux
+          case "${{ inputs.flash_layout }}" in
+            stock-128m)
+              echo "Using stock flash layout (no overrides)."
+              ;;
+            mod-512m)
+              # For some community trees/configs, 512M variants may require extra
+              # CONFIG_TARGET_DEVICE_* switches. Keep them in a dedicated file.
+              OVERRIDE_FILE="${GITHUB_WORKSPACE}/configs/nx60pro-512m.override"
+              if [ -f "${OVERRIDE_FILE}" ] && [ -s "${OVERRIDE_FILE}" ]; then
+                echo "" >> .config
+                echo "# --- BEGIN flash override fragment: mod-512m ---" >> .config
+                cat "${OVERRIDE_FILE}" >> .config
+                echo "" >> .config
+                echo "# --- END flash override fragment: mod-512m ---" >> .config
+              else
+                echo "Override file missing or empty: ${OVERRIDE_FILE}"
+              fi
+              ;;
+            *)
+              echo "Unknown flash_layout: ${{ inputs.flash_layout }}"
+              exit 1
+              ;;
+          esac
+
+      - name: Defconfig
+        working-directory: ${{ env.WORKDIR }}/openwrt
+        run: |
+          set -eux
+          make defconfig
+
+      - name: Minimal config verification
+        working-directory: ${{ env.WORKDIR }}/openwrt
+        run: |
+          set -eux
+          test -f .config
+
+          # Target sanity checks (avoid silent fallback)
+          grep -qE '^CONFIG_TARGET_mediatek=y$' .config
+          grep -qE '^CONFIG_TARGET_mediatek_mt7986=y$' .config
+
+          # Device/profile checks
+          if [ "${{ inputs.flash_layout }}" = "mod-512m" ]; then
+            grep -qE '^CONFIG_TARGET_DEVICE_mediatek_mt7986_DEVICE_netcore_n60pro-512rom=y$' .config
+          else
+            grep -qE '^CONFIG_TARGET_DEVICE_mediatek_mt7986_DEVICE_netcore_n60pro.*=y$' .config
+          fi
+
+          # Core UI expectation
+          grep -qE '^CONFIG_PACKAGE_luci=y$' .config
+
+          # Heavy profile expectations (fail fast if fragment missing)
+          if [ "${{ inputs.profile }}" = "nx60pro-heavy" ]; then
+            grep -qE '^CONFIG_PACKAGE_mwan3=y$' .config
+            grep -qE '^CONFIG_PACKAGE_adguardhome=y$' .config
+          fi
+
+      - name: Download sources
+        working-directory: ${{ env.WORKDIR }}/openwrt
+        run: |
+          set -eux
+          make download -j8
+
+      - name: Build firmware
+        working-directory: ${{ env.WORKDIR }}/openwrt
+        run: |
+          set -eux
+          make -j"$(nproc)" || make -j1 V=s
+
+      - name: Collect artifacts
+        run: |
+          set -eux
+          mkdir -p out
+          cp -r "${WORKDIR}/openwrt/bin/targets/mediatek/filogic" out/ || true
+          # Also export final .config for traceability
+          cp "${WORKDIR}/openwrt/.config" out/final.config || true
+
+      - name: Post build hook (manifest + checksums)
+        working-directory: ${{ env.WORKDIR }}/openwrt
+        env:
+          OUTDIR: ${{ github.workspace }}/out
+          PROFILE: ${{ inputs.profile }}
+          FLASH_LAYOUT: ${{ inputs.flash_layout }}
+          SOURCE_FLAVOR: ${{ inputs.source_flavor }}
+        run: |
+          set -eux
+          chmod +x "${GITHUB_WORKSPACE}/scripts/post-build.sh"
+          "${GITHUB_WORKSPACE}/scripts/post-build.sh"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: n60pro-${{ inputs.profile }}-${{ github.run_number }}
+          path: out/
+          if-no-files-found: error
+
+      - name: Create Release (optional)
+        if: ${{ inputs.upload_release == 'true' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: n60pro-${{ inputs.profile }}-${{ github.run_number }}
+          name: N60PRO ${{ inputs.profile }} #${{ github.run_number }}
+          files: |
+            out/**/*
+

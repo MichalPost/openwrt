@@ -1,0 +1,16 @@
+# Optional override snippet for 512M flash mod variants.
+#
+# Depending on the source tree you're using, you may need to enable a
+# specific device profile (e.g. netcore_n60pro-512rom) and clear package list.
+#
+# Example (from community actions templates):
+# CONFIG_TARGET_DEVICE_mediatek_mt7986_DEVICE_netcore_n60pro-512rom=y
+# CONFIG_TARGET_DEVICE_PACKAGES_mediatek_mt7986_DEVICE_netcore_n60pro-512rom=""
+
+# Try to keep this file limited to TARGET/DEVICE selectors.
+# If your tree doesn't have a 512rom device, you can leave this empty and still
+# build (but image size limits may bite when enabling many packages).
+
+CONFIG_TARGET_DEVICE_mediatek_mt7986_DEVICE_netcore_n60pro-512rom=y
+CONFIG_TARGET_DEVICE_PACKAGES_mediatek_mt7986_DEVICE_netcore_n60pro-512rom=""
+
