@@ -1,0 +1,90 @@
+#!/bin/sh
+
+set -eu
+
+PROFILE_FILE="/etc/n60pro-profile.conf"
+DNS_POLICY="${DNS_POLICY:-adguard}"
+ECS_HINT_DOMAINS="${ECS_HINT_DOMAINS:-netflix.com,disneyplus.com,primevideo.com,youtube.com}"
+
+if [ -f "${PROFILE_FILE}" ]; then
+  # shellcheck disable=SC1090
+  . "${PROFILE_FILE}"
+fi
+
+DNS_POLICY="${DNS_POLICY:-adguard}"
+
+if ! command -v uci >/dev/null 2>&1; then
+  exit 0
+fi
+
+# 如果同时存在多套 DNS 主栈，避免自动强改监听链路。
+CONFLICT_COUNT=0
+if [ -x /etc/init.d/adguardhome ]; then CONFLICT_COUNT=$((CONFLICT_COUNT + 1)); fi
+if [ -x /etc/init.d/smartdns ]; then CONFLICT_COUNT=$((CONFLICT_COUNT + 1)); fi
+if [ -x /etc/init.d/unbound ]; then CONFLICT_COUNT=$((CONFLICT_COUNT + 1)); fi
+
+if [ "${CONFLICT_COUNT}" -gt 1 ]; then
+  logger -t n60pro-dns "Multiple DNS stacks detected, skip forcing dnsmasq policy."
+  exit 0
+fi
+
+case "${DNS_POLICY}" in
+  adguard)
+    # 保持默认方案，避免和 AdGuard Home 的 DNS 接管冲突。
+    exit 0
+    ;;
+  dnsmasq-balanced|dnsmasq-unlock|dnsmasq-privacy)
+    ;;
+  *)
+    DNS_POLICY="dnsmasq-balanced"
+    ;;
+esac
+
+# dnsmasq-full 策略模板：开启现代记录类型友好参数并提供 ECS 软开关。
+uci -q set dhcp.@dnsmasq[0].domainneeded='1'
+uci -q set dhcp.@dnsmasq[0].boguspriv='1'
+uci -q set dhcp.@dnsmasq[0].filterwin2k='0'
+uci -q set dhcp.@dnsmasq[0].rebind_protection='1'
+uci -q set dhcp.@dnsmasq[0].localservice='1'
+uci -q delete dhcp.@dnsmasq[0].server
+uci -q delete dhcp.@dnsmasq[0].address
+
+add_opt() {
+  local opt="$1"
+  uci -q add_list dhcp.@dnsmasq[0].dnsmasq_option="${opt}"
+}
+
+uci -q delete dhcp.@dnsmasq[0].dnsmasq_option
+add_opt "cache-size=10000"
+add_opt "no-negcache"
+
+case "${DNS_POLICY}" in
+  dnsmasq-balanced)
+    # 平衡：默认不全局 ECS，仅对白名单域名启用（由上游 DNS 决定是否采纳）。
+    add_opt "edns-packet-max=1232"
+    add_opt "fast-dns-retry=1000,10000"
+    add_opt "add-subnet=0"
+    add_opt "add-mac"
+    add_opt "add-cpe-id=n60pro-balanced"
+    ;;
+  dnsmasq-unlock)
+    # 解锁优先：更积极地携带 ECS。
+    add_opt "edns-packet-max=1232"
+    add_opt "add-subnet=24,56"
+    add_opt "fast-dns-retry=500,5000"
+    ;;
+  dnsmasq-privacy)
+    # 隐私优先：关闭 ECS 侧信道。
+    add_opt "edns-packet-max=1232"
+    add_opt "strip-subnet"
+    ;;
+esac
+
+# 写入白名单提示，便于后续人工接入 smartdns/unbound 上游策略。
+uci -q set dhcp.n60pro_dns_policy=policy
+uci -q set dhcp.n60pro_dns_policy.mode="${DNS_POLICY}"
+uci -q set dhcp.n60pro_dns_policy.ecs_hint_domains="${ECS_HINT_DOMAINS}"
+
+uci -q commit dhcp || true
+
+exit 0

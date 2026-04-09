@@ -1,39 +1,95 @@
-name: Build N60PRO firmware
+name: 构建 N60PRO 固件
 
 on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+    branches:
+      - "**"
+  schedule:
+    - cron: "0 18 * * *" # daily (UTC) ~02:00 CST
   workflow_dispatch:
     inputs:
-      profile:
-        description: "Build profile (config in configs/)"
-        required: true
-        default: "nx60pro-heavy"
-        type: choice
-        options:
-          - nx60pro-basic
-          - nx60pro-heavy
-          - nx60pro-high-power.base
       feeds_lock:
-        description: "Optional feeds lock, e.g. istore=<sha>,nas=<sha>,nas_luci=<sha>"
+        description: "可选：锁定 feeds 版本，例如 istore=<sha>,nas=<sha>,nas_luci=<sha>"
         required: false
         default: ""
         type: string
-      flash_layout:
-        description: "Flash layout (for custom device variants)"
+      feeds_lock_profile:
+        description: "可选：从仓库内 feeds-lock 模板选择（推荐）"
         required: true
-        default: "stock-128m"
+        default: "none"
         type: choice
         options:
-          - stock-128m
-          - mod-512m
+          - none
+          - istore
+          - openclash
+          - passwall2
+          - full
       source_flavor:
-        description: "Source flavor"
+        description: "源码来源/风味"
         required: true
         default: "padavanonly-immortalwrt-mt798x-6.6"
         type: choice
         options:
           - padavanonly-immortalwrt-mt798x-6.6
+      passwall2_backend:
+        description: "PassWall2 后端预装（可选）"
+        required: true
+        default: "none"
+        type: choice
+        options:
+          - none
+          - sing-box
+          - xray
+          - dual
+      passwall2_preset:
+        description: "PassWall2 预设（可选）"
+        required: true
+        default: "base"
+        type: choice
+        options:
+          - base
+          - minimal
+      dns_policy:
+        description: "DNS 策略模板（可选）"
+        required: true
+        default: "adguard"
+        type: choice
+        options:
+          - adguard
+          - dnsmasq-balanced
+          - dnsmasq-unlock
+          - dnsmasq-privacy
+      sqm_tier:
+        description: "SQM CAKE 档位模板（可选）"
+        required: true
+        default: "300m"
+        type: choice
+        options:
+          - none
+          - 100m
+          - 300m
+          - 1g
+      attendedsysupgrade:
+        description: "启用 attendedsysupgrade（CI 元数据 + 固件侧客户端）"
+        required: true
+        default: "true"
+        type: choice
+        options:
+          - "false"
+          - "true"
       upload_release:
-        description: "Publish to GitHub Release"
+        description: "是否发布到 GitHub Release"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      enable_layered_cache:
+        description: "（高级）启用 tmp/ 与 staging_dir/host 分层缓存（仅默认分支生效）"
         required: true
         default: "false"
         type: choice
@@ -42,30 +98,148 @@ on:
           - "true"
 
 concurrency:
-  group: n60pro-${{ github.workflow }}-${{ github.ref }}-${{ inputs.profile }}
+  group: n60pro-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-22.04
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+      uci_only: ${{ steps.classify.outputs.uci_only }}
+      other_changed: ${{ steps.classify.outputs.other_changed }}
+    steps:
+      - name: 检出构建仓库
+        uses: actions/checkout@v4
+
+      - name: 变更分类（docs / uci-defaults / other）
+        id: filter
+        if: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            docs:
+              - "docs/**"
+              - "**/*.md"
+            uci:
+              - "files/etc/uci-defaults/**"
+            other:
+              - "**"
+              - "!docs/**"
+              - "!**/*.md"
+              - "!files/etc/uci-defaults/**"
+
+      - name: 计算 docs_only / uci_only
+        id: classify
+        run: |
+          set -eux
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "docs_only=false" >> "${GITHUB_OUTPUT}"
+            echo "uci_only=false" >> "${GITHUB_OUTPUT}"
+            echo "other_changed=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          docs="${{ steps.filter.outputs.docs }}"
+          uci="${{ steps.filter.outputs.uci }}"
+          other="${{ steps.filter.outputs.other }}"
+
+          docs_only=false
+          uci_only=false
+
+          if [ "${docs}" = "true" ] && [ "${uci}" = "false" ] && [ "${other}" = "false" ]; then
+            docs_only=true
+          fi
+
+          if [ "${uci}" = "true" ] && [ "${docs}" = "false" ] && [ "${other}" = "false" ]; then
+            uci_only=true
+          fi
+
+          echo "docs_only=${docs_only}" >> "${GITHUB_OUTPUT}"
+          echo "uci_only=${uci_only}" >> "${GITHUB_OUTPUT}"
+          echo "other_changed=${other}" >> "${GITHUB_OUTPUT}"
+
+  lint:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: 检出构建仓库
+        uses: actions/checkout@v4
+
+      - name: 安装 lint 依赖（shellcheck/shfmt）
+        run: |
+          set -eux
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck shfmt
+
+      - name: Shell 脚本格式化/静态检查
+        run: |
+          set -eux
+          shfmt -d scripts/*.sh
+          shellcheck scripts/*.sh
+          if ls files/etc/uci-defaults/* >/dev/null 2>&1; then
+            shfmt -d files/etc/uci-defaults/*
+            shellcheck files/etc/uci-defaults/*
+          fi
+
+  quick_validate:
+    needs: [changes, lint]
+    if: ${{ github.event_name != 'schedule' && github.event_name != 'workflow_dispatch' && needs.changes.outputs.uci_only == 'true' }}
+    runs-on: ubuntu-22.04
+    steps:
+      - name: 检出构建仓库
+        uses: actions/checkout@v4
+
+      - name: 安装 lint 依赖（shellcheck/shfmt）
+        run: |
+          set -eux
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck shfmt
+
+      - name: uci-defaults 轻量验证
+        run: |
+          set -eux
+          shfmt -d files/etc/uci-defaults/*
+          shellcheck files/etc/uci-defaults/*
+          echo "uci-defaults quick validation passed"
+
   build:
+    needs: [changes, lint]
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.uci_only != 'true' && needs.changes.outputs.other_changed == 'true') }}
     runs-on: ubuntu-22.04
     permissions:
       contents: write
 
     env:
       WORKDIR: workdir
+      SOURCE_FLAVOR: ${{ github.event_name == 'workflow_dispatch' && inputs.source_flavor || 'padavanonly-immortalwrt-mt798x-6.6' }}
+      PASSWALL2_BACKEND: ${{ github.event_name == 'workflow_dispatch' && inputs.passwall2_backend || 'none' }}
+      PASSWALL2_PRESET: ${{ github.event_name == 'workflow_dispatch' && inputs.passwall2_preset || 'base' }}
+      DNS_POLICY: ${{ github.event_name == 'workflow_dispatch' && inputs.dns_policy || 'adguard' }}
+      SQM_TIER: ${{ github.event_name == 'workflow_dispatch' && inputs.sqm_tier || '300m' }}
+      ATTENDEDSYSUPGRADE: ${{ github.event_name == 'workflow_dispatch' && inputs.attendedsysupgrade || 'true' }}
+      UPLOAD_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.upload_release || 'false' }}
+      FEEDS_LOCK: ${{ github.event_name == 'workflow_dispatch' && inputs.feeds_lock || '' }}
+      FEEDS_LOCK_PROFILE: ${{ github.event_name == 'workflow_dispatch' && inputs.feeds_lock_profile || 'none' }}
+      ENABLE_LAYERED_CACHE: ${{ github.event_name == 'workflow_dispatch' && inputs.enable_layered_cache || 'false' }}
 
     steps:
-      - name: Checkout build repo
+      - name: 检出构建仓库
         uses: actions/checkout@v4
 
-      - name: Show selected inputs
+      - name: 显示已选择的参数
         run: |
-          echo "profile=${{ inputs.profile }}"
-          echo "source_flavor=${{ inputs.source_flavor }}"
-          echo "upload_release=${{ inputs.upload_release }}"
-          echo "flash_layout=${{ inputs.flash_layout }}"
+          echo "event=${{ github.event_name }}"
+          echo "source_flavor=${SOURCE_FLAVOR}"
+          echo "upload_release=${UPLOAD_RELEASE}"
+          echo "passwall2_backend=${PASSWALL2_BACKEND}"
+          echo "passwall2_preset=${PASSWALL2_PRESET}"
+          echo "dns_policy=${DNS_POLICY}"
+          echo "sqm_tier=${SQM_TIER}"
+          echo "attendedsysupgrade=${ATTENDEDSYSUPGRADE}"
+          echo "feeds_lock_profile=${FEEDS_LOCK_PROFILE}"
+          echo "enable_layered_cache=${ENABLE_LAYERED_CACHE}"
 
-      - name: Install build dependencies
+      - name: 安装编译依赖
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -80,17 +254,11 @@ jobs:
             unzip vim wget xmlto xxd zlib1g-dev zstd \
             shellcheck shfmt
 
-      - name: Shell script format/lint
-        run: |
-          set -eux
-          shfmt -d scripts/*.sh
-          shellcheck scripts/*.sh
-
-      - name: Create workdir
+      - name: 创建工作目录
         run: |
           mkdir -p "${WORKDIR}"
 
-      - name: Clone source (padavanonly/immortalwrt-mt798x-6.6)
+      - name: 克隆源码（padavanonly/immortalwrt-mt798x-6.6）
         working-directory: ${{ env.WORKDIR }}
         run: |
           set -eux
@@ -99,24 +267,97 @@ jobs:
           git clone -b openwrt-24.10-6.6 --single-branch --filter=blob:none \
             https://github.com/padavanonly/immortalwrt-mt798x-6.6 openwrt
 
-      - name: Apply common customization (diy-part1)
+      - name: 记录源码元信息（用于缓存 key）
+        id: openwrt_meta
+        working-directory: ${{ env.WORKDIR }}/openwrt
+        run: |
+          set -eux
+          echo "source_head=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+          b="$(git rev-parse --abbrev-ref HEAD || true)"
+          echo "source_branch=${b}" >> "${GITHUB_OUTPUT}"
+          # "openwrt-24.10-6.6" -> "openwrt-24.10"
+          major="$(printf "%s" "${b}" | awk -F'-' '{if (NF>=3) {print $1"-"$2} else {print $1}}')"
+          echo "upstream_major=${major}" >> "${GITHUB_OUTPUT}"
+
+      - name: 恢复 ccache 缓存
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ runner.os }}-${{ env.SOURCE_FLAVOR }}-${{ steps.openwrt_meta.outputs.source_head }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ env.SOURCE_FLAVOR }}-
+
+      - name: 恢复 dl 缓存（下载目录）
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.WORKDIR }}/openwrt/dl
+          key: dl-${{ runner.os }}-${{ env.SOURCE_FLAVOR }}-${{ steps.openwrt_meta.outputs.upstream_major }}
+          restore-keys: |
+            dl-${{ runner.os }}-${{ env.SOURCE_FLAVOR }}-
+
+      - name: 恢复分层缓存（tmp / staging_dir/host，可选）
+        if: ${{ env.ENABLE_LAYERED_CACHE == 'true' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ env.WORKDIR }}/openwrt/tmp
+            ${{ env.WORKDIR }}/openwrt/staging_dir/host
+          key: layered-${{ runner.os }}-${{ env.SOURCE_FLAVOR }}-${{ steps.openwrt_meta.outputs.upstream_major }}
+          restore-keys: |
+            layered-${{ runner.os }}-${{ env.SOURCE_FLAVOR }}-
+
+      - name: 恢复上次 final.config（漂移检测）
+        uses: actions/cache/restore@v4
+        with:
+          path: .ci-cache
+          key: finalconfig-${{ runner.os }}-${{ env.SOURCE_FLAVOR }}-${{ steps.openwrt_meta.outputs.upstream_major }}
+          restore-keys: |
+            finalconfig-${{ runner.os }}-${{ env.SOURCE_FLAVOR }}-${{ steps.openwrt_meta.outputs.upstream_major }}-
+            finalconfig-${{ runner.os }}-${{ env.SOURCE_FLAVOR }}-
+
+      - name: 初始化 ccache（大小/统计）
+        run: |
+          set -eux
+          ccache --version
+          ccache -M 4G
+          ccache -z
+
+      - name: 应用通用自定义（diy-part1）
         working-directory: ${{ env.WORKDIR }}/openwrt
         run: |
           chmod +x "${GITHUB_WORKSPACE}/scripts/diy-part1.sh"
           "${GITHUB_WORKSPACE}/scripts/diy-part1.sh"
 
-      - name: Update feeds
+      - name: 更新 feeds
         working-directory: ${{ env.WORKDIR }}/openwrt
         run: |
           set -eux
           ./scripts/feeds update -a
 
-      - name: Lock feeds (optional)
-        if: ${{ inputs.feeds_lock != '' }}
+      - name: 读取 feeds lock profile（可选）
+        id: feeds_lock_profile
+        if: ${{ env.FEEDS_LOCK == '' && env.FEEDS_LOCK_PROFILE != 'none' }}
+        run: |
+          set -eux
+          f="${GITHUB_WORKSPACE}/configs/feeds-lock/${FEEDS_LOCK_PROFILE}.lock"
+          if [ ! -f "${f}" ]; then
+            echo "feeds lock profile file not found: ${f}"
+            exit 1
+          fi
+          # Remove comments/blank lines and join as comma-separated pairs
+          locks="$(grep -vE '^\s*($|#)' "${f}" | tr '\n' ',' | sed 's/,$//')"
+          echo "locks=${locks}" >> "${GITHUB_OUTPUT}"
+
+      - name: 锁定 feeds（可选）
+        if: ${{ env.FEEDS_LOCK != '' || (env.FEEDS_LOCK == '' && env.FEEDS_LOCK_PROFILE != 'none') }}
         working-directory: ${{ env.WORKDIR }}/openwrt
         run: |
           set -eux
-          LOCKS="${{ inputs.feeds_lock }}"
+          LOCKS="${FEEDS_LOCK}"
+          if [ -z "${LOCKS}" ]; then
+            LOCKS="${{ steps.feeds_lock_profile.outputs.locks }}"
+          fi
+          [ -n "${LOCKS}" ] || { echo "feeds_lock resolved to empty"; exit 1; }
           IFS=',' read -r -a pairs <<< "${LOCKS}"
           for kv in "${pairs[@]}"; do
             [ -n "${kv}" ] || continue
@@ -139,29 +380,47 @@ jobs:
             git -C "feeds/${name}" checkout --force "${ref}"
           done
 
-      - name: Install feeds
+      - name: 安装 feeds
         working-directory: ${{ env.WORKDIR }}/openwrt
         run: |
           set -eux
           ./scripts/feeds install -a
 
-      - name: Apply N60PRO customization (diy-part-n60pro)
+      - name: 计算 feeds 锁定哈希（用于缓存 key）
+        id: feeds_meta
+        working-directory: ${{ env.WORKDIR }}/openwrt
+        run: |
+          set -eux
+          chmod +x "${GITHUB_WORKSPACE}/scripts/ci/feeds-hash.sh"
+          echo "feed_lock_hash=$("${GITHUB_WORKSPACE}/scripts/ci/feeds-hash.sh")" >> "${GITHUB_OUTPUT}"
+
+      - name: 应用 N60PRO 自定义（diy-part-n60pro）
         working-directory: ${{ env.WORKDIR }}/openwrt
         run: |
           chmod +x "${GITHUB_WORKSPACE}/scripts/diy-part-n60pro.sh"
           "${GITHUB_WORKSPACE}/scripts/diy-part-n60pro.sh"
 
-      - name: Seed config (defconfig high-power as base)
+      - name: 写入 N60PRO 构建策略配置
+        working-directory: ${{ env.WORKDIR }}/openwrt
+        run: |
+          set -eux
+          mkdir -p files/etc
+          cat > files/etc/n60pro-profile.conf <<'EOF'
+          DNS_POLICY=${DNS_POLICY}
+          SQM_TIER=${SQM_TIER}
+          ATTENDEDSYSUPGRADE=${ATTENDEDSYSUPGRADE}
+          EOF
+
+      - name: 初始化配置（以高功率 defconfig 为基底）
         working-directory: ${{ env.WORKDIR }}/openwrt
         run: |
           set -eux
           cp -f defconfig/nx60pro-ipailna-high-power.config .config
 
-      - name: Overlay profile config (configs/<profile>.config)
+      - name: 叠加配置（推荐日常版，基于 fragments）
         working-directory: ${{ env.WORKDIR }}/openwrt
         run: |
           set -eux
-          PROFILE="${{ inputs.profile }}"
           FRAG_DIR="${GITHUB_WORKSPACE}/configs/fragments"
 
           add_frag() {
@@ -178,66 +437,84 @@ jobs:
             echo "# --- END fragment: ${f} ---" >> .config
           }
 
-          case "${PROFILE}" in
-            nx60pro-basic)
-              add_frag "base-luci-zh.config"
-              add_frag "tools-core.config"
-              ;;
-            nx60pro-heavy)
-              add_frag "base-luci-zh.config"
-              add_frag "tools-core.config"
-              add_frag "multiwan.config"
-              add_frag "vpn-zerotier.config"
+          # 单一推荐“日常版”（保证体验 + 常用好用插件）：
+          # - LuCI + 中文
+          # - 常用工具（curl/wget/htop）
+          # - 常用服务（ttyd/upnp/ddns）
+          # - iStore 商店：刷机即用（无需手动 opkg）
+          # - iStore 生态常用：AdGuard Home + OpenClash
+          # - 代理分流另一生态：PassWall2（可与 OpenClash 并存，按需启用其一）
+          # - USB/EXT4：为 128M 闪存设备做 extroot 扩容准备
+          add_frag "base-luci-zh.config"
+          add_frag "tools-core.config"
+          add_frag "qol-and-services.config"
+          add_frag "istore.config"
+          case "${DNS_POLICY}" in
+            adguard)
               add_frag "adguard.config"
-              add_frag "storage-usb.config"
-              add_frag "qol-and-services.config"
               ;;
-            nx60pro-high-power.base)
-              # Keep this aligned with your baseline high-power profile intentions.
-              add_frag "base-luci-zh.config"
-              add_frag "tools-core.config"
+            dnsmasq-balanced|dnsmasq-unlock|dnsmasq-privacy)
+              add_frag "dns-dnsmasq-full.config"
               ;;
             *)
-              echo "Unknown profile: ${PROFILE}"
+              echo "Unknown dns_policy: ${DNS_POLICY}"
               exit 1
               ;;
           esac
-
-      - name: Apply flash layout overrides (optional)
-        working-directory: ${{ env.WORKDIR }}/openwrt
-        run: |
-          set -eux
-          case "${{ inputs.flash_layout }}" in
-            stock-128m)
-              echo "Using stock flash layout (no overrides)."
+          add_frag "openclash.config"
+          add_frag "passwall2.config"
+          case "${PASSWALL2_BACKEND}" in
+            none)
+              echo "PassWall2 backend preset: none"
               ;;
-            mod-512m)
-              # For some community trees/configs, 512M variants may require extra
-              # CONFIG_TARGET_DEVICE_* switches. Keep them in a dedicated file.
-              OVERRIDE_FILE="${GITHUB_WORKSPACE}/configs/nx60pro-512m.override"
-              if [ -f "${OVERRIDE_FILE}" ] && [ -s "${OVERRIDE_FILE}" ]; then
-                echo "" >> .config
-                echo "# --- BEGIN flash override fragment: mod-512m ---" >> .config
-                cat "${OVERRIDE_FILE}" >> .config
-                echo "" >> .config
-                echo "# --- END flash override fragment: mod-512m ---" >> .config
-              else
-                echo "Override file missing or empty: ${OVERRIDE_FILE}"
-              fi
+            sing-box)
+              add_frag "passwall2-backend-sing-box.config"
+              ;;
+            xray)
+              add_frag "passwall2-backend-xray.config"
+              ;;
+            dual)
+              add_frag "passwall2-backend-sing-box.config"
+              add_frag "passwall2-backend-xray.config"
               ;;
             *)
-              echo "Unknown flash_layout: ${{ inputs.flash_layout }}"
+              echo "Unknown passwall2_backend: ${PASSWALL2_BACKEND}"
               exit 1
               ;;
           esac
+          case "${PASSWALL2_PRESET}" in
+            base)
+              echo "PassWall2 preset: base"
+              ;;
+            minimal)
+              add_frag "passwall2-backend-minimal.config"
+              ;;
+            *)
+              echo "Unknown passwall2_preset: ${PASSWALL2_PRESET}"
+              exit 1
+              ;;
+          esac
+          add_frag "storage-usb.config"
+          if [ "${SQM_TIER}" != "none" ]; then
+            add_frag "sqm-cake-${SQM_TIER}.config"
+          fi
 
-      - name: Defconfig
+      - name: 生成 defconfig（补齐依赖）
         working-directory: ${{ env.WORKDIR }}/openwrt
         run: |
           set -eux
           make defconfig
 
-      - name: Minimal config verification
+      - name: .config 漂移检测（高亮关键项）
+        working-directory: ${{ env.WORKDIR }}/openwrt
+        run: |
+          set -eux
+          mkdir -p "${GITHUB_WORKSPACE}/.ci-cache"
+          chmod +x "${GITHUB_WORKSPACE}/scripts/ci/config-drift.sh"
+          "${GITHUB_WORKSPACE}/scripts/ci/config-drift.sh" "${GITHUB_WORKSPACE}/.ci-cache/final.config" ".config" || true
+          cp -f .config "${GITHUB_WORKSPACE}/.ci-cache/final.config"
+
+      - name: 最小化配置校验
         working-directory: ${{ env.WORKDIR }}/openwrt
         run: |
           set -eux
@@ -248,34 +525,56 @@ jobs:
           grep -qE '^CONFIG_TARGET_mediatek_mt7986=y$' .config
 
           # Device/profile checks
-          if [ "${{ inputs.flash_layout }}" = "mod-512m" ]; then
-            grep -qE '^CONFIG_TARGET_DEVICE_mediatek_mt7986_DEVICE_netcore_n60pro-512rom=y$' .config
-          else
-            grep -qE '^CONFIG_TARGET_DEVICE_mediatek_mt7986_DEVICE_netcore_n60pro.*=y$' .config
-          fi
+          grep -qE '^CONFIG_TARGET_DEVICE_mediatek_mt7986_DEVICE_netcore_n60pro.*=y$' .config
 
           # Core UI expectation
           grep -qE '^CONFIG_PACKAGE_luci=y$' .config
 
-          # Heavy profile expectations (fail fast if fragment missing)
-          if [ "${{ inputs.profile }}" = "nx60pro-heavy" ]; then
-            grep -qE '^CONFIG_PACKAGE_mwan3=y$' .config
-            grep -qE '^CONFIG_PACKAGE_adguardhome=y$' .config
-          fi
+          # Daily profile expectations (fail fast if fragment missing)
+          grep -qE '^CONFIG_PACKAGE_luci-app-store=y$' .config
+          grep -qE '^CONFIG_PACKAGE_adguardhome=y$' .config
+          grep -qE '^CONFIG_PACKAGE_luci-app-openclash=y$' .config
+          grep -qE '^CONFIG_PACKAGE_luci-app-passwall2=y$' .config
 
-      - name: Download sources
+      - name: 下载源码包
         working-directory: ${{ env.WORKDIR }}/openwrt
         run: |
           set -eux
           make download -j8
 
-      - name: Build firmware
+      - name: 保存 dl 缓存（下载目录）
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.WORKDIR }}/openwrt/dl
+          key: dl-${{ runner.os }}-${{ env.SOURCE_FLAVOR }}-${{ steps.openwrt_meta.outputs.upstream_major }}-${{ steps.feeds_meta.outputs.feed_lock_hash }}
+
+      - name: 保存本次 final.config（用于下次漂移检测）
+        uses: actions/cache/save@v4
+        with:
+          path: .ci-cache
+          key: finalconfig-${{ runner.os }}-${{ env.SOURCE_FLAVOR }}-${{ steps.openwrt_meta.outputs.upstream_major }}-${{ steps.feeds_meta.outputs.feed_lock_hash }}
+
+      - name: 保存分层缓存（tmp / staging_dir/host，可选）
+        if: ${{ env.ENABLE_LAYERED_CACHE == 'true' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ env.WORKDIR }}/openwrt/tmp
+            ${{ env.WORKDIR }}/openwrt/staging_dir/host
+          key: layered-${{ runner.os }}-${{ env.SOURCE_FLAVOR }}-${{ steps.openwrt_meta.outputs.upstream_major }}-${{ steps.feeds_meta.outputs.feed_lock_hash }}
+
+      - name: 编译固件
         working-directory: ${{ env.WORKDIR }}/openwrt
+        env:
+          USE_CCACHE: "1"
+          CCACHE_DIR: ~/.ccache
         run: |
           set -eux
+          ccache -s || true
           make -j"$(nproc)" || make -j1 V=s
+          ccache -s || true
 
-      - name: Collect artifacts
+      - name: 收集产物
         run: |
           set -eux
           mkdir -p out
@@ -283,31 +582,146 @@ jobs:
           # Also export final .config for traceability
           cp "${WORKDIR}/openwrt/.config" out/final.config || true
 
-      - name: Post build hook (manifest + checksums)
+      - name: 体积预算检查（rootfs/kernel/sysupgrade）
+        run: |
+          set -eux
+          chmod +x "${GITHUB_WORKSPACE}/scripts/ci/check-size-budget.sh"
+          "${GITHUB_WORKSPACE}/scripts/ci/check-size-budget.sh" out
+
+      - name: 编译后处理（清单 + 校验和）
         working-directory: ${{ env.WORKDIR }}/openwrt
         env:
           OUTDIR: ${{ github.workspace }}/out
-          PROFILE: ${{ inputs.profile }}
-          FLASH_LAYOUT: ${{ inputs.flash_layout }}
-          SOURCE_FLAVOR: ${{ inputs.source_flavor }}
+          PROFILE: daily
+          FLASH_LAYOUT: stock-128m
+          SOURCE_FLAVOR: ${{ env.SOURCE_FLAVOR }}
+          FEEDS_LOCK_REQUESTED: ${{ env.FEEDS_LOCK != '' && env.FEEDS_LOCK || steps.feeds_lock_profile.outputs.locks }}
+          DNS_POLICY: ${{ env.DNS_POLICY }}
+          SQM_TIER: ${{ env.SQM_TIER }}
+          ATTENDEDSYSUPGRADE: ${{ env.ATTENDEDSYSUPGRADE }}
         run: |
           set -eux
           chmod +x "${GITHUB_WORKSPACE}/scripts/post-build.sh"
           "${GITHUB_WORKSPACE}/scripts/post-build.sh"
 
-      - name: Upload artifacts
+      - name: 生成 ASU 元数据（可选）
+        if: ${{ env.ATTENDEDSYSUPGRADE == 'true' }}
+        run: |
+          set -eux
+          mkdir -p out/asu
+          mapfile -t SYSUPGRADE_IMAGES < <(find out -type f -name "*sysupgrade*.bin" | LC_ALL=C sort)
+          if [ "${#SYSUPGRADE_IMAGES[@]}" -eq 0 ]; then
+            echo "No sysupgrade image found under out/"
+            exit 1
+          fi
+
+          {
+            echo "{"
+            echo "  \"generated_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\","
+            echo "  \"run_number\": \"${{ github.run_number }}\","
+            echo "  \"profile\": \"daily\","
+            echo "  \"flash_layout\": \"stock-128m\","
+            echo "  \"source_flavor\": \"${SOURCE_FLAVOR}\","
+            echo "  \"dns_policy\": \"${DNS_POLICY}\","
+            echo "  \"sqm_tier\": \"${SQM_TIER}\","
+            echo "  \"images\": ["
+            for i in "${!SYSUPGRADE_IMAGES[@]}"; do
+              f="${SYSUPGRADE_IMAGES[$i]}"
+              rel="${f#out/}"
+              sha="$(sha256sum "${f}" | awk '{print $1}')"
+              size="$(stat -c '%s' "${f}")"
+              if [ "${i}" -gt 0 ]; then
+                echo "    ,{"
+              else
+                echo "    {"
+              fi
+              echo "      \"path\": \"${rel}\","
+              echo "      \"sha256\": \"${sha}\","
+              echo "      \"size\": ${size}"
+              echo "    }"
+            done
+            echo "  ]"
+            echo "}"
+          } > out/asu/metadata.json
+
+      - name: CI 自检（产物一致性）
+        run: |
+          set -eux
+          test -s out/manifest.txt
+          test -s out/sha256sums
+          find out -type f -name "*sysupgrade*.bin" | grep -q .
+
+          # 校验 sha256sums 基本格式（hash + two-space + path）
+          awk 'NF >= 2 && $1 ~ /^[0-9a-f]{64}$/ {ok++} END {exit ok>0?0:1}' out/sha256sums
+
+          if [ "${ATTENDEDSYSUPGRADE}" = "true" ]; then
+            test -s out/asu/metadata.json
+            python3 - <<'PY'
+import hashlib
+import json
+from pathlib import Path
+
+root = Path("out")
+meta_path = root / "asu" / "metadata.json"
+meta = json.loads(meta_path.read_text(encoding="utf-8"))
+
+required = ["generated_at", "run_number", "profile", "flash_layout", "source_flavor", "dns_policy", "sqm_tier", "images"]
+for k in required:
+    if k not in meta:
+        raise SystemExit(f"metadata missing key: {k}")
+
+images = meta.get("images")
+if not isinstance(images, list) or not images:
+    raise SystemExit("metadata images must be a non-empty list")
+
+sha_lines = (root / "sha256sums").read_text(encoding="utf-8").splitlines()
+sha_map = {}
+for line in sha_lines:
+    if not line.strip():
+        continue
+    parts = line.split(None, 1)
+    if len(parts) != 2:
+        continue
+    digest, rel = parts
+    sha_map[rel.strip()] = digest.strip()
+
+for idx, item in enumerate(images):
+    if not isinstance(item, dict):
+        raise SystemExit(f"metadata images[{idx}] must be object")
+    for key in ("path", "sha256", "size"):
+        if key not in item:
+            raise SystemExit(f"metadata images[{idx}] missing {key}")
+    rel = item["path"]
+    f = root / rel
+    if not f.is_file():
+        raise SystemExit(f"image file missing: {rel}")
+    actual_size = f.stat().st_size
+    if int(item["size"]) != actual_size:
+        raise SystemExit(f"size mismatch for {rel}: {item['size']} != {actual_size}")
+    actual_sha = hashlib.sha256(f.read_bytes()).hexdigest()
+    if item["sha256"] != actual_sha:
+        raise SystemExit(f"sha mismatch in metadata for {rel}")
+    sha_line = sha_map.get(rel)
+    if sha_line != actual_sha:
+        raise SystemExit(f"sha mismatch in sha256sums for {rel}")
+
+print("ASU metadata validation passed")
+PY
+          fi
+
+      - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: n60pro-${{ inputs.profile }}-${{ github.run_number }}
+          name: n60pro-daily-${{ github.run_number }}
           path: out/
           if-no-files-found: error
 
-      - name: Create Release (optional)
-        if: ${{ inputs.upload_release == 'true' }}
+      - name: 创建 Release（可选）
+        if: ${{ env.UPLOAD_RELEASE == 'true' }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: n60pro-${{ inputs.profile }}-${{ github.run_number }}
-          name: N60PRO ${{ inputs.profile }} #${{ github.run_number }}
+          tag_name: n60pro-daily-${{ github.run_number }}
+          name: N60PRO（daily）#${{ github.run_number }}
           files: |
             out/**/*
 

@@ -1,0 +1,45 @@
+#!/bin/sh
+set -eu
+
+log() {
+  echo "[wifi-tuning] $*" > /dev/console 2>/dev/null || true
+}
+
+# Keep defaults conservative:
+# - Do not force-enable radios
+# - Do not force txpower/htmode/channel (hardware/region differences)
+# - Only apply safe compatibility defaults if wireless config exists
+
+REGION="${WIFI_REGION:-US}"
+FT_ENABLE="${WIFI_FT_ENABLE:-0}"
+
+if [ ! -f /etc/config/wireless ]; then
+  log "No /etc/config/wireless yet, skipping."
+  exit 0
+fi
+
+# Set regdomain/country on all wifi-device sections (if present)
+for dev in $(uci -q show wireless 2>/dev/null | sed -n "s/^\(wireless\.[^=]*\)=wifi-device$/\1/p"); do
+  uci -q set "${dev}.country=${REGION}" || true
+done
+
+# WPA3 compatibility: upgrade psk2 -> sae-mixed only when a key exists
+for iface in $(uci -q show wireless 2>/dev/null | sed -n "s/^\(wireless\.[^=]*\)=wifi-iface$/\1/p"); do
+  enc="$(uci -q get "${iface}.encryption" 2>/dev/null || true)"
+  key="$(uci -q get "${iface}.key" 2>/dev/null || true)"
+  if [ "${enc}" = "psk2" ] && [ -n "${key}" ]; then
+    uci -q set "${iface}.encryption=sae-mixed" || true
+  fi
+
+  # 802.11r (Fast Transition) is OFF by default for compatibility.
+  if [ "${FT_ENABLE}" = "1" ]; then
+    uci -q set "${iface}.ieee80211r=1" || true
+    uci -q set "${iface}.ft_over_ds=0" || true
+    uci -q set "${iface}.ft_psk_generate_local=1" || true
+  fi
+done
+
+uci -q commit wireless || true
+log "Applied defaults (country=${REGION}, ft=${FT_ENABLE})."
+exit 0
+

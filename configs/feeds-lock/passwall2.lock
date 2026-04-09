@@ -1,0 +1,5 @@
+# PassWall2 生态建议一起锁定（避免 packages / luci 面板不匹配）
+# 格式：
+#   passwall_packages=<commit-or-tag>
+#   passwall2=<commit-or-tag>
+

@@ -2,21 +2,230 @@
 
 set -eu
 
-# Run once on first boot. If user keeps config across upgrades,
-# existing settings should not be force-overwritten.
+# 仅在首次启动时运行一次。若用户在升级时选择保留配置，
+# 则不应强制覆盖已有设置。
 
 LAN_IP="192.168.6.1"
 TZ="CST-8"
 ZONENAME="Asia/Shanghai"
+EXTROOT_LABEL="${EXTROOT_LABEL:-OWRT_OVERLAY}"
+AUTO_MOUNT_USB="${AUTO_MOUNT_USB:-1}"
+AUTO_SWAP_USB="${AUTO_SWAP_USB:-1}"
+ZRAM_SWAP_ENABLE="${ZRAM_SWAP_ENABLE:-0}"
+ZRAM_SWAP_SIZE_MB="${ZRAM_SWAP_SIZE_MB:-256}"
+ATTENDEDSYSUPGRADE="${ATTENDEDSYSUPGRADE:-true}"
+PROFILE_FILE="/etc/n60pro-profile.conf"
+
+if [ -f "${PROFILE_FILE}" ]; then
+  # shellcheck disable=SC1090
+  . "${PROFILE_FILE}"
+fi
+
+log() {
+  echo "[n60pro-defaults] $*" > /dev/console 2>/dev/null || true
+}
+
+have_cmd() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+detect_extroot_dev() {
+  # 优先使用卷标查找（推荐用于 U 盘 overlay/extroot 场景）。
+  if have_cmd blkid; then
+    dev="$(blkid -L "${EXTROOT_LABEL}" 2>/dev/null || true)"
+    [ -n "${dev:-}" ] && echo "${dev}" && return 0
+  fi
+
+  # 兜底：扫描 USB 块设备，寻找 ext4 分区。
+  for d in /dev/sd*[0-9]; do
+    [ -b "${d}" ] || continue
+    if have_cmd blkid && blkid "${d}" 2>/dev/null | grep -q 'TYPE="ext4"'; then
+      echo "${d}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+ensure_fstab() {
+  [ -f /etc/config/fstab ] && return 0
+  have_cmd block || return 1
+  block detect > /etc/config/fstab 2>/dev/null || return 1
+  return 0
+}
+
+fstab_has_overlay() {
+  uci -q show fstab 2>/dev/null | grep -q "target='/overlay'" || return 1
+  return 0
+}
+
+fstab_has_uuid() {
+  local uuid="$1"
+  uci -q show fstab 2>/dev/null | grep -q "uuid='${uuid}'" || return 1
+  return 0
+}
+
+fstab_has_target() {
+  local target="$1"
+  uci -q show fstab 2>/dev/null | grep -q "target='${target}'" || return 1
+  return 0
+}
+
+configure_auto_mounts() {
+  [ "${AUTO_MOUNT_USB}" = "1" ] || return 0
+  have_cmd blkid || return 0
+  ensure_fstab || return 0
+
+  for d in /dev/sd*[0-9]; do
+    [ -b "${d}" ] || continue
+
+    # Skip extroot overlay device (label match) to avoid duplicate mount entries.
+    if [ -n "${EXTROOT_LABEL}" ] && [ "$(blkid -L "${EXTROOT_LABEL}" 2>/dev/null || true)" = "${d}" ]; then
+      continue
+    fi
+
+    fstype="$(blkid -s TYPE -o value "${d}" 2>/dev/null || true)"
+    uuid="$(blkid -s UUID -o value "${d}" 2>/dev/null || true)"
+    [ -n "${fstype}" ] || continue
+    [ -n "${uuid}" ] || continue
+
+    # Swap handled separately.
+    if [ "${fstype}" = "swap" ]; then
+      continue
+    fi
+
+    target="/mnt/$(basename "${d}")"
+    fstab_has_uuid "${uuid}" && continue
+    fstab_has_target "${target}" && continue
+
+    section="$(uci -q add fstab mount)"
+    uci -q set "fstab.${section}.target=${target}"
+    uci -q set "fstab.${section}.uuid=${uuid}"
+    uci -q set "fstab.${section}.enabled=1"
+    uci -q set "fstab.${section}.fstype=${fstype}"
+    uci -q set "fstab.${section}.options=rw,noatime"
+  done
+
+  uci -q commit fstab || true
+  return 0
+}
+
+configure_auto_swap() {
+  [ "${AUTO_SWAP_USB}" = "1" ] || return 0
+  have_cmd blkid || return 0
+  ensure_fstab || return 0
+
+  for d in /dev/sd*[0-9]; do
+    [ -b "${d}" ] || continue
+    fstype="$(blkid -s TYPE -o value "${d}" 2>/dev/null || true)"
+    [ "${fstype}" = "swap" ] || continue
+    uuid="$(blkid -s UUID -o value "${d}" 2>/dev/null || true)"
+    [ -n "${uuid}" ] || continue
+    fstab_has_uuid "${uuid}" && continue
+
+    section="$(uci -q add fstab swap)"
+    uci -q set "fstab.${section}.uuid=${uuid}"
+    uci -q set "fstab.${section}.enabled=1"
+  done
+
+  uci -q commit fstab || true
+  return 0
+}
+
+configure_zram_swap_if_available() {
+  [ "${ZRAM_SWAP_ENABLE}" = "1" ] || return 0
+  [ -x /etc/init.d/zram ] || [ -x /etc/init.d/zram-swap ] || return 0
+
+  # Best-effort: only set defaults if the config exists and no zram section is present yet.
+  [ -f /etc/config/system ] || return 0
+  uci -q show system 2>/dev/null | grep -q "system\..*=zram" && return 0
+
+  section="$(uci -q add system zram)"
+  uci -q set "system.${section}.enabled=1"
+  uci -q set "system.${section}.size_mb=${ZRAM_SWAP_SIZE_MB}"
+  uci -q commit system || true
+  return 0
+}
+
+configure_attendedsysupgrade_defaults() {
+  [ "${ATTENDEDSYSUPGRADE}" = "true" ] || return 0
+  [ -f /etc/config/attendedsysupgrade ] || return 0
+
+  if ! uci -q show attendedsysupgrade | grep -q "=server"; then
+    uci -q add attendedsysupgrade server >/dev/null
+  fi
+  if ! uci -q show attendedsysupgrade | grep -q "=client"; then
+    uci -q add attendedsysupgrade client >/dev/null
+  fi
+
+  uci -q set attendedsysupgrade.@server[0].url='https://sysupgrade.openwrt.org'
+  uci -q set attendedsysupgrade.@server[0].advanced_mode='0'
+  uci -q set attendedsysupgrade.@client[0].upgrade_packages='1'
+  uci -q set attendedsysupgrade.@client[0].keep_packages='1'
+  uci -q set attendedsysupgrade.@client[0].auto_backup='1'
+  uci -q set attendedsysupgrade.@client[0].force_sysupgrade='0'
+  uci -q set attendedsysupgrade.@client[0].verbosity='2'
+  uci -q commit attendedsysupgrade || true
+  return 0
+}
+
+configure_extroot_overlay() {
+  dev="$1"
+
+  have_cmd blkid || return 1
+  uuid="$(blkid -s UUID -o value "${dev}" 2>/dev/null || true)"
+  [ -n "${uuid}" ] || return 1
+
+  ensure_fstab || return 1
+  fstab_has_overlay && return 0
+
+  # 尝试挂载并迁移当前 overlay 内容（尽力而为，失败不阻断）。
+  mkdir -p /mnt/owrt_extroot
+  if mount -t ext4 "${dev}" /mnt/owrt_extroot 2>/dev/null; then
+    if [ -d /overlay ] && [ -n "$(ls -A /overlay 2>/dev/null || true)" ]; then
+      log "Migrating existing /overlay to ${dev} (UUID=${uuid})"
+      cp -a /overlay/. /mnt/owrt_extroot/ 2>/dev/null || true
+      [ -e /overlay/.fs_state ] && cp -a /overlay/.fs_state /mnt/owrt_extroot/ 2>/dev/null || true
+      sync 2>/dev/null || true
+    fi
+    umount /mnt/owrt_extroot 2>/dev/null || true
+  fi
+
+  section="$(uci -q add fstab mount)"
+  uci -q set "fstab.${section}.target=/overlay"
+  uci -q set "fstab.${section}.uuid=${uuid}"
+  uci -q set "fstab.${section}.enabled=1"
+  uci -q set "fstab.${section}.fstype=ext4"
+  uci -q set "fstab.${section}.options=rw,noatime"
+  uci -q commit fstab || true
+
+  log "Configured extroot overlay on ${dev} (UUID=${uuid}). Reboot required."
+  return 0
+}
 
 uci -q batch <<EOF
 set network.lan.ipaddr='${LAN_IP}'
 set system.@system[0].timezone='${TZ}'
 set system.@system[0].zonename='${ZONENAME}'
+set system.@system[0].log_size='64'
+set system.@system[0].log_buffer_size='64'
 EOF
 
 uci -q commit network || true
 uci -q commit system || true
+
+if dev="$(detect_extroot_dev 2>/dev/null || true)"; then
+  log "Found candidate extroot device: ${dev} (label=${EXTROOT_LABEL})"
+  configure_extroot_overlay "${dev}" || log "Extroot configuration skipped (missing tools or mount failed)."
+else
+  log "No extroot USB partition found (label=${EXTROOT_LABEL})."
+fi
+
+configure_auto_mounts || log "Auto-mount configuration skipped."
+configure_auto_swap || log "Auto-swap configuration skipped."
+configure_zram_swap_if_available || true
+configure_attendedsysupgrade_defaults || true
 
 exit 0
 

@@ -1,0 +1,10 @@
+# 常用组合（按需填入 commit/tag）
+# iStore:
+#   istore=<commit-or-tag>
+#   nas=<commit-or-tag>
+#   nas_luci=<commit-or-tag>
+# Proxy:
+#   openclash=<commit-or-tag>
+#   passwall_packages=<commit-or-tag>
+#   passwall2=<commit-or-tag>
+
