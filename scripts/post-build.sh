@@ -37,15 +37,15 @@ append_kv() {
 append_section_line() {
 	local section="$1"
 	local line="$2"
-	echo "" >>"${manifest}"
-	echo "[${section}]" >>"${manifest}"
-	printf "%s\n" "${line}" >>"${manifest}"
+	{
+		printf "\n[%s]\n" "${section}"
+		printf "%s\n" "${line}"
+	} >>"${manifest}"
 }
 
 append_section_header() {
 	local section="$1"
-	echo "" >>"${manifest}"
-	echo "[${section}]" >>"${manifest}"
+	printf "\n[%s]\n" "${section}" >>"${manifest}"
 }
 
 get_feed_head_or_error() {
@@ -170,17 +170,23 @@ write_manifest() {
 }
 
 write_sha256sums() {
-	: >"${sha_file}"
+	local tmp_sha_file
+	tmp_sha_file="$(mktemp -p "${OUTDIR}" "sha256sums.XXXXXX")"
+	trap 'rm -f "${tmp_sha_file}"' RETURN
+
 	(
 		cd "${OUTDIR}"
 		# 为 out/ 下的所有文件生成稳定的校验和
-		# 生成时排除校验和文件本身
+		# 生成时排除校验和文件本身（避免读写同一个文件）
 		while IFS= read -r -d '' f; do
 			rel="${f#./}"
 			[ "${rel}" = "$(basename "${sha_file}")" ] && continue
 			sha256sum "${rel}"
 		done < <(find . -type f -print0 | LC_ALL=C sort -z)
-	) >"${sha_file}"
+	) >"${tmp_sha_file}"
+
+	mv -f "${tmp_sha_file}" "${sha_file}"
+	trap - RETURN
 }
 
 write_manifest
