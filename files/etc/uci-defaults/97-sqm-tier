@@ -6,19 +6,19 @@ PROFILE_FILE="/etc/n60pro-profile.conf"
 SQM_TIER="${SQM_TIER:-300m}"
 
 if [ -f "${PROFILE_FILE}" ]; then
-  # shellcheck disable=SC1090
-  . "${PROFILE_FILE}"
+	# shellcheck disable=SC1090
+	. "${PROFILE_FILE}"
 fi
 
 SQM_TIER="${SQM_TIER:-300m}"
 [ "${SQM_TIER}" = "none" ] && exit 0
 
 if ! command -v uci >/dev/null 2>&1; then
-  exit 0
+	exit 0
 fi
 
 if [ ! -f /etc/config/sqm ]; then
-  touch /etc/config/sqm
+	touch /etc/config/sqm
 fi
 
 SQM_IFACE="${SQM_IFACE:-pppoe-wan}"
@@ -28,27 +28,27 @@ SQM_LINKLAYER="${SQM_LINKLAYER:-ethernet}"
 SQM_OVERHEAD="${SQM_OVERHEAD:-44}"
 
 case "${SQM_TIER}" in
-  100m)
-    DL_KBIT="${SQM_DOWNLOAD:-95000}"
-    UL_KBIT="${SQM_UPLOAD:-30000}"
-    ;;
-  300m)
-    DL_KBIT="${SQM_DOWNLOAD:-285000}"
-    UL_KBIT="${SQM_UPLOAD:-80000}"
-    ;;
-  1g)
-    DL_KBIT="${SQM_DOWNLOAD:-850000}"
-    UL_KBIT="${SQM_UPLOAD:-100000}"
-    ;;
-  *)
-    DL_KBIT="${SQM_DOWNLOAD:-285000}"
-    UL_KBIT="${SQM_UPLOAD:-80000}"
-    ;;
+100m)
+	DL_KBIT="${SQM_DOWNLOAD:-95000}"
+	UL_KBIT="${SQM_UPLOAD:-30000}"
+	;;
+300m)
+	DL_KBIT="${SQM_DOWNLOAD:-285000}"
+	UL_KBIT="${SQM_UPLOAD:-80000}"
+	;;
+1g)
+	DL_KBIT="${SQM_DOWNLOAD:-850000}"
+	UL_KBIT="${SQM_UPLOAD:-100000}"
+	;;
+*)
+	DL_KBIT="${SQM_DOWNLOAD:-285000}"
+	UL_KBIT="${SQM_UPLOAD:-80000}"
+	;;
 esac
 
 # 若尚未初始化 queue，则创建默认 section；已存在则只做幂等覆盖。
 if ! uci -q show sqm | grep -q "=queue"; then
-  uci -q add sqm queue >/dev/null
+	uci -q add sqm queue >/dev/null
 fi
 
 uci -q set sqm.@queue[0].enabled='1'
