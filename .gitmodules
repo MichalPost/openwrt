@@ -1,0 +1,5 @@
+[submodule "_upstream/immortalwrt-mt798x-6.6"]
+	path = _upstream/immortalwrt-mt798x-6.6
+	url = https://github.com/padavanonly/immortalwrt-mt798x-6.6.git
+	branch = openwrt-24.10-6.6
+
