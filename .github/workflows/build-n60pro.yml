@@ -97,6 +97,10 @@ on:
           - "false"
           - "true"
 
+env:
+  # Opt into Node.js 24 for JavaScript-based actions (Node 20 deprecation)
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 concurrency:
   group: n60pro-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -110,12 +114,15 @@ jobs:
       other_changed: ${{ steps.classify.outputs.other_changed }}
     steps:
       - name: 检出构建仓库
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          set-safe-directory: true
 
       - name: 变更分类（docs / uci-defaults / other）
         id: filter
         if: ${{ github.event_name == 'push' || github.event_name == 'pull_request' }}
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         with:
           filters: |
             docs:
@@ -163,7 +170,10 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: 检出构建仓库
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          set-safe-directory: true
 
       - name: 安装 lint 依赖（shellcheck/shfmt）
         run: |
@@ -187,7 +197,10 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: 检出构建仓库
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          set-safe-directory: true
 
       - name: 安装 lint 依赖（shellcheck/shfmt）
         run: |
@@ -224,7 +237,10 @@ jobs:
 
     steps:
       - name: 检出构建仓库
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          set-safe-directory: true
 
       - name: 显示已选择的参数
         run: |

@@ -10,11 +10,11 @@ echo "[diy-part1] start"
 # 保持这些项为“可选”：即使你后续移除，也不应影响构建主流程。
 
 add_feed() {
-  local line="$1"
-  local file="feeds.conf.default"
-  if ! grep -qF -- "$line" "$file"; then
-    echo "$line" >> "$file"
-  fi
+	local line="$1"
+	local file="feeds.conf.default"
+	if ! grep -qF -- "$line" "$file"; then
+		echo "$line" >>"$file"
+	fi
 }
 
 # iStore（可选）。如果你不使用 iStore，可以删除这些行。
@@ -33,4 +33,3 @@ add_feed "src-git passwall_packages https://github.com/Openwrt-Passwall/openwrt-
 add_feed "src-git passwall2 https://github.com/Openwrt-Passwall/openwrt-passwall2.git;main"
 
 echo "[diy-part1] done"
-

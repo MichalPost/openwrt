@@ -11,20 +11,19 @@ echo "[diy-part-n60pro] start"
 
 # 应用 files/ overlay（例如 /etc/uci-defaults）
 if [ -n "${GITHUB_WORKSPACE:-}" ] && [ -d "${GITHUB_WORKSPACE}/files" ]; then
-  mkdir -p files
-  if command -v rsync >/dev/null 2>&1; then
-    rsync -a "${GITHUB_WORKSPACE}/files/" "./files/"
-  else
-    cp -a "${GITHUB_WORKSPACE}/files/." "./files/"
-  fi
+	mkdir -p files
+	if command -v rsync >/dev/null 2>&1; then
+		rsync -a "${GITHUB_WORKSPACE}/files/" "./files/"
+	else
+		cp -a "${GITHUB_WORKSPACE}/files/." "./files/"
+	fi
 
-  if [ -d "files/etc/uci-defaults" ]; then
-    for f in files/etc/uci-defaults/*; do
-      [ -f "${f}" ] || continue
-      chmod 0755 "${f}" || true
-    done
-  fi
+	if [ -d "files/etc/uci-defaults" ]; then
+		for f in files/etc/uci-defaults/*; do
+			[ -f "${f}" ] || continue
+			chmod 0755 "${f}" || true
+		done
+	fi
 fi
 
 echo "[diy-part-n60pro] done"
-
