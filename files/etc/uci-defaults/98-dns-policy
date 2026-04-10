@@ -49,7 +49,7 @@ uci -q delete dhcp.@dnsmasq[0].server
 uci -q delete dhcp.@dnsmasq[0].address
 
 add_opt() {
-	local opt="$1"
+	opt="$1"
 	uci -q add_list dhcp.@dnsmasq[0].dnsmasq_option="${opt}"
 }
 
