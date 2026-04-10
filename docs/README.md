@@ -85,6 +85,7 @@
 工作流会按以下顺序生成最终 `.config`：
 
 1. `cp defconfig/nx60pro-ipailna-high-power.config .config`（高功率 defconfig 作为基底）
+   - 注：上游 mt798x 源码树未提供该命名的 defconfig；当前使用 `defconfig/mt7981-ax3000.config` 作为基底
 2. 追加 `configs/fragments/*.config`（日常版由多个 **片段** 组合，不覆盖基底）
 3. 若选择 `mod-512m`，再追加 `configs/nx60pro-512m.override`
 4. `make defconfig` 让 Kconfig 补齐依赖与默认值

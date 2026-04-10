@@ -107,6 +107,7 @@ concurrency:
 
 jobs:
   changes:
+    name: 变更检测
     runs-on: ubuntu-22.04
     outputs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
@@ -167,6 +168,7 @@ jobs:
           echo "other_changed=${other}" >> "${GITHUB_OUTPUT}"
 
   lint:
+    name: 代码规范检查
     runs-on: ubuntu-22.04
     steps:
       - name: 检出构建仓库
@@ -192,6 +194,7 @@ jobs:
           fi
 
   quick_validate:
+    name: 轻量校验（仅 uci-defaults）
     needs: [changes, lint]
     if: ${{ github.event_name != 'schedule' && github.event_name != 'workflow_dispatch' && needs.changes.outputs.uci_only == 'true' }}
     runs-on: ubuntu-22.04
@@ -216,6 +219,7 @@ jobs:
           echo "uci-defaults quick validation passed"
 
   build:
+    name: 编译固件
     needs: [changes, lint]
     if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.uci_only != 'true' && needs.changes.outputs.other_changed == 'true') }}
     runs-on: ubuntu-22.04
@@ -431,7 +435,9 @@ jobs:
         working-directory: ${{ env.WORKDIR }}/openwrt
         run: |
           set -eux
-          cp -f defconfig/nx60pro-ipailna-high-power.config .config
+          # NOTE: upstream mt798x tree doesn't ship nx60pro-named defconfig.
+          # Use the upstream mt7981 AX3000 multi-profile defconfig as base.
+          cp -f defconfig/mt7981-ax3000.config .config
 
       - name: 叠加配置（推荐日常版，基于 fragments）
         working-directory: ${{ env.WORKDIR }}/openwrt
