@@ -656,57 +656,57 @@ jobs:
 
           if [ "${ATTENDEDSYSUPGRADE}" = "true" ]; then
             test -s out/asu/metadata.json
-            python3 - <<'PY'
-import hashlib
-import json
-from pathlib import Path
+          python3 - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
 
-root = Path("out")
-meta_path = root / "asu" / "metadata.json"
-meta = json.loads(meta_path.read_text(encoding="utf-8"))
+          root = Path("out")
+          meta_path = root / "asu" / "metadata.json"
+          meta = json.loads(meta_path.read_text(encoding="utf-8"))
 
-required = ["generated_at", "run_number", "profile", "flash_layout", "source_flavor", "dns_policy", "sqm_tier", "images"]
-for k in required:
-    if k not in meta:
-        raise SystemExit(f"metadata missing key: {k}")
+          required = ["generated_at", "run_number", "profile", "flash_layout", "source_flavor", "dns_policy", "sqm_tier", "images"]
+          for k in required:
+              if k not in meta:
+                  raise SystemExit(f"metadata missing key: {k}")
 
-images = meta.get("images")
-if not isinstance(images, list) or not images:
-    raise SystemExit("metadata images must be a non-empty list")
+          images = meta.get("images")
+          if not isinstance(images, list) or not images:
+              raise SystemExit("metadata images must be a non-empty list")
 
-sha_lines = (root / "sha256sums").read_text(encoding="utf-8").splitlines()
-sha_map = {}
-for line in sha_lines:
-    if not line.strip():
-        continue
-    parts = line.split(None, 1)
-    if len(parts) != 2:
-        continue
-    digest, rel = parts
-    sha_map[rel.strip()] = digest.strip()
+          sha_lines = (root / "sha256sums").read_text(encoding="utf-8").splitlines()
+          sha_map = {}
+          for line in sha_lines:
+              if not line.strip():
+                  continue
+              parts = line.split(None, 1)
+              if len(parts) != 2:
+                  continue
+              digest, rel = parts
+              sha_map[rel.strip()] = digest.strip()
 
-for idx, item in enumerate(images):
-    if not isinstance(item, dict):
-        raise SystemExit(f"metadata images[{idx}] must be object")
-    for key in ("path", "sha256", "size"):
-        if key not in item:
-            raise SystemExit(f"metadata images[{idx}] missing {key}")
-    rel = item["path"]
-    f = root / rel
-    if not f.is_file():
-        raise SystemExit(f"image file missing: {rel}")
-    actual_size = f.stat().st_size
-    if int(item["size"]) != actual_size:
-        raise SystemExit(f"size mismatch for {rel}: {item['size']} != {actual_size}")
-    actual_sha = hashlib.sha256(f.read_bytes()).hexdigest()
-    if item["sha256"] != actual_sha:
-        raise SystemExit(f"sha mismatch in metadata for {rel}")
-    sha_line = sha_map.get(rel)
-    if sha_line != actual_sha:
-        raise SystemExit(f"sha mismatch in sha256sums for {rel}")
+          for idx, item in enumerate(images):
+              if not isinstance(item, dict):
+                  raise SystemExit(f"metadata images[{idx}] must be object")
+              for key in ("path", "sha256", "size"):
+                  if key not in item:
+                      raise SystemExit(f"metadata images[{idx}] missing {key}")
+              rel = item["path"]
+              f = root / rel
+              if not f.is_file():
+                  raise SystemExit(f"image file missing: {rel}")
+              actual_size = f.stat().st_size
+              if int(item["size"]) != actual_size:
+                  raise SystemExit(f"size mismatch for {rel}: {item['size']} != {actual_size}")
+              actual_sha = hashlib.sha256(f.read_bytes()).hexdigest()
+              if item["sha256"] != actual_sha:
+                  raise SystemExit(f"sha mismatch in metadata for {rel}")
+              sha_line = sha_map.get(rel)
+              if sha_line != actual_sha:
+                  raise SystemExit(f"sha mismatch in sha256sums for {rel}")
 
-print("ASU metadata validation passed")
-PY
+          print("ASU metadata validation passed")
+          PY
           fi
 
       - name: 上传构建产物
