@@ -1,0 +1,212 @@
+/**
+ * N60 Pro / NetConsole — semantic theme tokens aligned with Pencil (pencil-new.pen).
+ * Usage: set data-theme on <html> or a root shell: light | dark | aurora | sunset
+ * Paste into LuCI custom CSS or a theme stylesheet; tune --glass-blur in-browser.
+ */
+
+/* -------------------------------------------------------------------------- */
+/* Light                                                                      */
+/* -------------------------------------------------------------------------- */
+
+[data-theme="light"] {
+  --color-background: #fafbff;
+  --color-foreground: #1a1a1a;
+  --color-muted-foreground: #666666;
+  --color-card: #ffffff;
+  --color-border: #e5e7eb;
+  --color-primary: #4a9fd8;
+  --color-destructive: #dc2626;
+  --color-success: #16a34a;
+  --color-warning: #d97706;
+  --color-info: #2563eb;
+
+  --mesh-pink: rgb(244 114 182 / 0.33);
+  --mesh-violet: rgb(167 139 250 / 0.2);
+  --mesh-cyan: rgb(34 211 238 / 0.33);
+  --mesh-orange: rgb(251 146 60 / 0.27);
+
+  --glass-card: rgb(248 250 252 / 0.94);
+  --glass-border: rgb(255 255 255 / 0.6);
+  --glass-blur: 28px;
+  --glass-shadow: 0 1px 2px rgb(15 23 42 / 0.06);
+
+  --input-bg: #ffffff;
+  --nav-item-bg: #eff6ff;
+  --nav-item-fg: #1a1a1a;
+  --on-primary: #ffffff;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Dark                                                                       */
+/* -------------------------------------------------------------------------- */
+
+[data-theme="dark"] {
+  --color-background: #030712;
+  --color-foreground: #f1f5f9;
+  --color-muted-foreground: #94a3b8;
+  --color-card: #111827;
+  --color-border: #1f2937;
+  --color-primary: #60a5fa;
+  --color-destructive: #f87171;
+  --color-success: #34d399;
+  --color-warning: #fbbf24;
+  --color-info: #3b82f6;
+
+  --mesh-pink: rgb(219 39 119 / 0.33);
+  --mesh-violet: rgb(124 58 237 / 0.33);
+  --mesh-cyan: rgb(34 211 238 / 0.47);
+  --mesh-orange: rgb(249 115 22 / 0.4);
+
+  --glass-card: rgb(15 23 42 / 0.8);
+  --glass-border: rgb(148 163 184 / 0.2);
+  --glass-blur: 26px;
+  --glass-shadow: 0 1px 3px rgb(0 0 0 / 0.35);
+
+  --input-bg: #0f172a;
+  --nav-item-bg: #1e3a5f;
+  --nav-item-fg: #e2e8f0;
+  --on-primary: #ffffff;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Aurora — teal / violet mesh highlights                                      */
+/* -------------------------------------------------------------------------- */
+
+[data-theme="aurora"] {
+  --color-background: #0a0f1f;
+  --color-foreground: #f8fafc;
+  --color-muted-foreground: #cbd5e1;
+  --color-card: rgb(30 41 59 / 0.94);
+  --color-border: #334155;
+  --color-primary: #a78bfa;
+  --color-destructive: #fb7185;
+  --color-success: #34d399;
+  --color-warning: #fbbf24;
+  --color-info: #22d3ee;
+
+  --mesh-pink: rgb(232 121 249 / 0.67);
+  --mesh-violet: rgb(167 139 250 / 0.8);
+  --mesh-cyan: rgb(45 212 191 / 0.8);
+  --mesh-orange: rgb(251 146 60 / 0.4);
+
+  --glass-card: rgb(30 41 59 / 0.95);
+  --glass-border: rgb(167 139 250 / 0.27);
+  --glass-blur: 32px;
+  --glass-shadow: 0 0 0 1px rgb(34 211 238 / 0.08), 0 12px 40px rgb(15 23 42 / 0.45);
+
+  --input-bg: #0f172a;
+  --nav-item-bg: #312e81;
+  --nav-item-fg: #e0e7ff;
+  --on-primary: #ffffff;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Sunset — coral / amber / plum                                               */
+/* -------------------------------------------------------------------------- */
+
+[data-theme="sunset"] {
+  --color-background: #fff8f3;
+  --color-foreground: #431407;
+  --color-muted-foreground: #9a3412;
+  --color-card: #ffffff;
+  --color-border: #fed7aa;
+  --color-primary: #ea580c;
+  --color-destructive: #dc2626;
+  --color-success: #16a34a;
+  --color-warning: #ca8a04;
+  --color-info: #2563eb;
+
+  --mesh-pink: rgb(251 113 133 / 0.6);
+  --mesh-violet: rgb(147 51 234 / 0.53);
+  --mesh-cyan: rgb(20 184 166 / 0.33);
+  --mesh-orange: rgb(249 115 22 / 0.73);
+
+  --glass-card: rgb(255 247 237 / 0.94);
+  --glass-border: rgb(253 186 116 / 0.27);
+  --glass-blur: 28px;
+  --glass-shadow: 0 1px 2px rgb(124 45 18 / 0.08);
+
+  --input-bg: #ffffff;
+  --nav-item-bg: #ffedd5;
+  --nav-item-fg: #431407;
+  --on-primary: #ffffff;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Default theme when attribute omitted                                        */
+/* -------------------------------------------------------------------------- */
+
+:root {
+  color-scheme: light;
+}
+
+:root:not([data-theme]) {
+  --color-background: #fafbff;
+  --color-foreground: #1a1a1a;
+  --color-muted-foreground: #666666;
+  --color-card: #ffffff;
+  --color-border: #e5e7eb;
+  --color-primary: #4a9fd8;
+  --color-destructive: #dc2626;
+  --color-success: #16a34a;
+  --color-warning: #d97706;
+  --color-info: #2563eb;
+  --mesh-pink: rgb(244 114 182 / 0.33);
+  --mesh-violet: rgb(167 139 250 / 0.2);
+  --mesh-cyan: rgb(34 211 238 / 0.33);
+  --mesh-orange: rgb(251 146 60 / 0.27);
+  --glass-card: rgb(248 250 252 / 0.94);
+  --glass-border: rgb(255 255 255 / 0.6);
+  --glass-blur: 28px;
+  --glass-shadow: 0 1px 2px rgb(15 23 42 / 0.06);
+
+  --input-bg: #ffffff;
+  --nav-item-bg: #eff6ff;
+  --nav-item-fg: #1a1a1a;
+  --on-primary: #ffffff;
+}
+
+[data-theme="dark"],
+[data-theme="aurora"] {
+  color-scheme: dark;
+}
+
+[data-theme="sunset"] {
+  color-scheme: light;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Aurora mesh page background (radial stacks)                                 */
+/* -------------------------------------------------------------------------- */
+
+body.mesh-bg,
+.app-shell.mesh-bg {
+  background-color: var(--color-background);
+  background-image:
+    radial-gradient(ellipse 120% 80% at 0% 0%, var(--mesh-pink), transparent 55%),
+    radial-gradient(ellipse 100% 70% at 100% 10%, var(--mesh-violet), transparent 50%),
+    radial-gradient(ellipse 90% 85% at 35% 100%, var(--mesh-cyan), transparent 55%),
+    radial-gradient(ellipse 70% 60% at 85% 75%, var(--mesh-orange), transparent 50%);
+  background-attachment: fixed;
+  min-height: 100vh;
+  color: var(--color-foreground);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Glass panel (LuCI-friendly)                                                 */
+/* -------------------------------------------------------------------------- */
+
+.glass-panel {
+  background: color-mix(in srgb, var(--glass-card) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--glass-border) 85%, transparent);
+  border-radius: 16px;
+  box-shadow: var(--glass-shadow);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  .glass-panel {
+    background: var(--color-card);
+  }
+}
